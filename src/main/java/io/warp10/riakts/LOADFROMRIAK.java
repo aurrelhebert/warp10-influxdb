@@ -227,12 +227,12 @@ public class LOADFROMRIAK implements WarpScriptRawJavaFunction {
         }
         
         //
-        // Get tags
+        // Get tags/Labels
         //
         
         Map<String,String> labels = new HashMap<String, String>();
-        if(columns.containsKey("tags")) {
-          Map tag = (Map) columns.get("tags");
+        if(columns.containsKey("labels")) {
+          Map tag = (Map) columns.get("labels");
           for (Object tagPos : tag.keySet()) {
             int pos = getPosition(tagPos);
             Cell tagCell = cells.get(pos);
@@ -294,7 +294,7 @@ public class LOADFROMRIAK implements WarpScriptRawJavaFunction {
         //
         Long elevation = GeoTimeSerie.NO_ELEVATION;
         if (columns.containsKey("elevation")) {
-          Object tagPos = columns.get("longitude");
+          Object tagPos = columns.get("elevation");
           int pos = getPosition(tagPos);
           Cell elevCell = cells.get(pos);
           if(null != elevCell) {
