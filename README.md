@@ -1,4 +1,4 @@
-# warp10-udf-riak-ts
+# warp10-udf-riakts
 This project correspond to a [Warp 10 UDF](http://www.warp10.io/reference/miscellaneous/UDF/#sidebar) to load GTS from Riak-ts tables.
 
 ## Usage
