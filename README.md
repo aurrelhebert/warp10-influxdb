@@ -1,4 +1,4 @@
-# warp10-udf-riakts
+# warp10-udf-influxdb
 This project correspond to a [Warp 10 UDF](http://www.warp10.io/reference/miscellaneous/UDF/#sidebar) to load GTS from Influx-DB databases.
 
 ## Usage
