@@ -16,4 +16,4 @@ include 'api'
 include 'services:webservice'
 */
 
-rootProject.name = 'Warp10-Riak-ts'
+rootProject.name = 'Warp10-InfluxDB'

@@ -67,7 +67,7 @@ task pack(type: Jar) {
         appendix = "${warpSuffixName}"
 
         manifest {
-            attributes("Implementation-Title": "Influx db function")
+            attributes("Implementation-Title": "InfluxDB function")
             attributes("Implementation-Version": "0.0.1")
         }
 
