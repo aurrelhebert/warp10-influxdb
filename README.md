@@ -11,9 +11,9 @@ Here a small example is given.
 Latitude and longitude must contains values of type Double. 
 Elevation can be Long or Double but will be rounded to the nearest Long.
 ```
+'http://localhost:8086' // URL
 'user'      // Influx user
 'pwd'       // Password
-'http://localhost:8086' // URL
 'mydb'      // Database
             // A map
 {
