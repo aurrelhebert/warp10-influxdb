@@ -45,7 +45,7 @@ import io.warp10.continuum.store.Constants;
  * Function used to load GTS from RIAK db
  *
  */
-public class LOADFROMRIAK implements WarpScriptRawJavaFunction {
+public class LOADFROMINFLUX implements WarpScriptRawJavaFunction {
 
  
   /**
