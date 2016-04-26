@@ -33,7 +33,7 @@ Elevation can be Long or Double but will be rounded to the nearest Long.
     'longitude' 'long'
 }
             // A query
-'select *  from table'
+'SELECT *  FROM table'
 'io.warp10.InfluxDB.LOADFROMINFLUX' UDF
 ```
 
