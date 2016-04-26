@@ -19,19 +19,41 @@ Here a small example is given.
 'mydb'      // Database
             // A map
 {
-    'timestamp' 0
+    // GTS timestamps corresponds to the values of the 1st column of the result query
+    'timestamp' 0  
+    
+    // One GTS will be generated for each following class
     'class' 
     {
+    
+        // An idle GTS wich will have the same values than the "idle" column of the Influx result
         'idle' 'idle'
+        
+        // A cpu GTS, that will have the values of the 5th column of the Influx result
         4 'cpu'
     }
+    
+    // Those GTS will have the following labels (tags)
     'labels'
     {
+    
+        // A server label corresponding to the column "host" of the Influx result
         'host' 'server'
+        
+        // A serie label corresponding to the 2nd column of the Influx result
         1 'serie'
+        
+        // A status label corresponding to the column "status" of the Influx result
+        'status' NULL
     }
+    
+    // GTS elevations corresponds to the values of the 6th column of the result query
     'elevation' 5
+    
+    // GTS latitudes corresponds to the values of the "lat" column of the result query
     'latitude'  'lat'
+    
+    // GTS latitudes corresponds to the values of the "long" column of the result query
     'longitude' 'long'
 }
             // A query
