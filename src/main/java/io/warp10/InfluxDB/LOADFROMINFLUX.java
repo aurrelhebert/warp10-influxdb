@@ -14,9 +14,11 @@
 //   limitations under the License.
 //
 
-package io.warp10.riakts;
+package io.warp10.InfluxDB;
 
 import java.net.UnknownHostException;
+import java.time.ZonedDateTime;
+import java.time.temporal.ChronoField;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -24,11 +26,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
-import com.basho.riak.client.api.RiakClient;
-import com.basho.riak.client.api.commands.timeseries.Query;
-import com.basho.riak.client.core.query.timeseries.Cell;
-import com.basho.riak.client.core.query.timeseries.QueryResult;
-import com.basho.riak.client.core.query.timeseries.Row;
+import org.influxdb.InfluxDB;
+import org.influxdb.InfluxDBFactory;
+import org.influxdb.dto.Query;
+import org.influxdb.dto.QueryResult;
+import org.influxdb.dto.QueryResult.Result;
+import org.influxdb.dto.QueryResult.Series;
+
 import com.geoxp.GeoXPLib;
 
 import io.warp10.continuum.gts.GTSHelper;
@@ -42,19 +46,20 @@ import io.warp10.warp.sdk.WarpScriptRawJavaFunction;
 import io.warp10.continuum.store.Constants;
 
 /**
- * Function used to load GTS from RIAK db
+ * Function used to load GTS from Influx db
  *
  */
-public class LOADFROMRIAK implements WarpScriptRawJavaFunction {
+public class LOADFROMINFLUX implements WarpScriptRawJavaFunction {
 
  
   /**
-   * Method to execute when LOADFROMRIAK is called
+   * Method to execute when LOADFROMINFLUX is called
    * Need 4 elements on top of the stack
-   * url riak url
-   * port riak port
-   * colums is a Map indicating position in riak table of each type of column, and eventually the new column name
-   * queryText query to compute on Riak-ts
+   * url InfluxDB url
+   * port InfluxDB port
+   * colums is a Map indicating position in InfluxDB table of each type of column, and the new column name
+   * columns can also contains column name in InfluxDB with null value
+   * queryText query to compute on InfluxDB
    */
   public List<Object> apply(List<Object> arg0) throws WarpScriptJavaFunctionException {
     
@@ -70,20 +75,32 @@ public class LOADFROMRIAK implements WarpScriptRawJavaFunction {
     
     Object queryText = stack.pop();
     Object colums = stack.pop();
-    Object port = stack.pop();
+    Object dbName = stack.pop();
+    Object password = stack.pop();
+    Object user = stack.pop();
     Object url = stack.pop();
     
     //
     // Check params validity
     //
-    
+
     if (!(url instanceof String)) {
       throw new WarpScriptJavaFunctionException("url must be a String");
       //throw new WarpScriptJavaFunctionException();
     }
     
-    if (!(port instanceof Long)) {
-      throw new WarpScriptJavaFunctionException("port must be a long");
+    if (!(user instanceof String)) {
+      throw new WarpScriptJavaFunctionException("user must be a String");
+      //throw new WarpScriptJavaFunctionException();
+    }
+    
+    if (!(password instanceof String)) {
+      throw new WarpScriptJavaFunctionException("password must be a String");
+      //throw new WarpScriptJavaFunctionException();
+    }
+    
+    if (!(dbName instanceof String)) {
+      throw new WarpScriptJavaFunctionException("dbName must be a String");
       //throw new WarpScriptJavaFunctionException();
     }
     
@@ -98,11 +115,11 @@ public class LOADFROMRIAK implements WarpScriptRawJavaFunction {
     }
 
     //
-    // Get GTS from Riak server
+    // Get GTS from Influx database
     //
     
     try {
-      Collection<GeoTimeSerie> gts = getGTSfromRiakTS((String) queryText, (Map) colums, ((Number) port).intValue(), (String) url);
+      Collection<GeoTimeSerie> gts = getGTSfromInfluxDB((String) queryText, (Map) colums, (String) dbName, (String) url, (String) user, (String) password);
       //stack.push(gts);
       arg0.remove(0);
       List<GeoTimeSerie> liSeries = new ArrayList<GeoTimeSerie>();
@@ -117,10 +134,6 @@ public class LOADFROMRIAK implements WarpScriptRawJavaFunction {
 
       stack.push(liSeries);
       arg0.add(stack);
-    } catch (UnknownHostException | ExecutionException | InterruptedException e) {
-      // TODO Auto-generated catch block
-      throw new WarpScriptJavaFunctionException("Riak exception" + e.getMessage() + e.getStackTrace().toString());
-      //throw new WarpScriptJavaFunctionException();
     } catch (WarpScriptException e) {
       // TODO Auto-generated catch block
       e.printStackTrace();
@@ -146,273 +159,348 @@ public class LOADFROMRIAK implements WarpScriptRawJavaFunction {
   }
 
   /**
-   * Method to parse riak-ts data into GTS
+   * Method to parse InfluxDB data into GTS
    * @param queryText
    * @param columns
-   * @param riakDBPort
-   * @param riakDBUrl
-   * @return
+   * @param Database
+   * @param InfluxUrl
+   * @param Influx password
+   * @param Influx user
+   * @return Collection of GTS
    * @throws WarpScriptJavaFunctionException
-   * @throws UnknownHostException
-   * @throws ExecutionException
-   * @throws InterruptedException
    */
-  public Collection<GeoTimeSerie> getGTSfromRiakTS(String queryText, Map<String,Object> columns, int riakDBPort, String riakDBUrl) throws WarpScriptJavaFunctionException, UnknownHostException, ExecutionException, InterruptedException {
+  public Collection<GeoTimeSerie> getGTSfromInfluxDB(String queryText, Map<String,Object> columns, String dbName, String influxDBUrl, String user, String password) throws WarpScriptJavaFunctionException {
+    
+    //
+    // Check if Map isValid
+    //
+    
+    if (!columns.containsKey("timestamp")) {
+      throw new WarpScriptJavaFunctionException("No timestamp field");
+      //throw new WarpScriptJavaFunctionException();
+    }
+    
+    if (!columns.containsKey("class")) {
+      throw new WarpScriptJavaFunctionException("No class field");
+      //throw new WarpScriptJavaFunctionException();
+    }
+
+    if (columns.containsKey("latitude") && !columns.containsKey("longitude") 
+        || !columns.containsKey("latitude") && columns.containsKey("longitude") ) {
+      throw new WarpScriptJavaFunctionException("Can't have a latitude without a longitude field");
+      //throw new WarpScriptJavaFunctionException();
+    }
+    
+    //
+    // Open connection with the InfluxDB server
+    //
+    
+    InfluxDB influxDB = InfluxDBFactory.connect(influxDBUrl, user, password);
+    
+    //
+    // Get the result of the query to the specify database
+    //
+    
+    if (null == influxDB) {
+      throw new WarpScriptJavaFunctionException("Connection with influxDB failed");
+    }
+    
+    Query query = new Query(queryText, dbName);
+    QueryResult result = influxDB.query(query);
+    
+    if (null == result) {
+      throw new WarpScriptJavaFunctionException("InfluxDB query failed");
+    }
+    
+    //
+    // Map result initialize
+    //
+    Map<String, GeoTimeSerie> mapGTS = new HashMap<String, GeoTimeSerie>();
 
     //
-    // Connect to the Riak Client
+    // Analyse all results lines
     //
-    
-    RiakClient riakts = RiakClient.newClient(riakDBPort, riakDBUrl);
-    
-    if (null != riakts) {
+
+    List<Result> results = result.getResults();
+
+    for (Result curResult : results) {
+      List<Series> series = curResult.getSeries();
+
+      // 
+      // Run throw all result series
       //
-      // Get query result in Riak-ts
-      //
-      
-      Query queryb = new Query.Builder(queryText).build();
-      QueryResult queryResult = riakts.execute(queryb);
-      
-      
-      //
-      // Check if Map isValid
-      //
-      
-      if (!columns.containsKey("timestamp")) {
-        throw new WarpScriptJavaFunctionException("No timestamp field");
-        //throw new WarpScriptJavaFunctionException();
-      }
-      
-      if (!columns.containsKey("class")) {
-        throw new WarpScriptJavaFunctionException("No class field");
-        //throw new WarpScriptJavaFunctionException();
-      }
-  
-      if (columns.containsKey("latitude") && !columns.containsKey("longitude") 
-          || !columns.containsKey("latitude") && columns.containsKey("longitude") ) {
-        throw new WarpScriptJavaFunctionException("Can't have a latitude without a longitude field");
-        //throw new WarpScriptJavaFunctionException();
-      }
-      
-      //
-      // Map result initialize
-      //
-      Map<String, GeoTimeSerie> mapGTS = new HashMap<String, GeoTimeSerie>();
-      
-      //
-      // Analyse all results lines
-      //
-      
-      int count = queryResult.getRowsCount();
-      //System.out.println(count);
-      List<Row> rows = queryResult.getRowsCopy();
-      StringBuffer result = new StringBuffer();
-      for (Row row : rows) {
-        //System.out.println(row.getCellsCopy().toString());
-        List<Cell> cells = row.getCellsCopy();
-        
+
+      for (Series serie : series) {
+
         //
-        // Get timestamp value
+        // Get each column names
         //
-        
-        Long timestamp = null;
-        Object tagPosTs = columns.get("timestamp");
-        int posTs = getPosition(tagPosTs);
-        Cell timestampCell = cells.get(posTs);
-        if(timestampCell==null) {
-          throw new WarpScriptJavaFunctionException("Null timestamp");
-          //throw new WarpScriptJavaFunctionException();
+
+        List<String> keys = serie.getColumns();
+
+        //
+        // Get timestamp position
+        // if null take column named time
+        // 
+
+        int posTimeStamp;
+        if (columns.get("timestamp") == null) {
+          try {
+            posTimeStamp = getPosition("time", keys);
+          } catch (Exception e) {
+            throw new WarpScriptJavaFunctionException(e.getMessage());
+          }
         } else {
-          timestamp = timestampCell.getTimestamp() * Constants.TIME_UNITS_PER_MS;
+          try {
+            posTimeStamp = getPosition(columns.get("timestamp"), keys);
+          } catch (Exception e) {
+            throw new WarpScriptJavaFunctionException(e.getMessage());
+          }
         }
-        
+
         //
-        // Get tags/Labels
+        // Get latitude, longitude and elevation position column
         //
-        
-        Map<String,String> labels = new HashMap<String, String>();
-        if(columns.containsKey("labels")) {
+        Integer posLatitude = null, posLongitude = null, posElevation = null;
+        if (columns.containsKey("latitude") 
+            && columns.containsKey("longitude")) {
+          try {
+            posLatitude = getPosition(columns.get("latitude"), keys);
+          } catch (Exception e) {
+            throw new WarpScriptJavaFunctionException(e.getMessage());
+          }
+          try {
+            posLongitude = getPosition(columns.get("longitude"), keys);
+          } catch (Exception e) {
+            throw new WarpScriptJavaFunctionException(e.getMessage());
+          }
+        }
+
+        if (columns.containsKey("elevation")) {
+          try {
+            posElevation = getPosition(columns.get("elevation"), keys);
+          } catch (Exception e) {
+            throw new WarpScriptJavaFunctionException(e.getMessage());
+          }
+        }
+
+        //
+        // Get labels position columns
+        //
+
+        Map<Integer, String> posLabels = new HashMap<Integer, String>(); 
+
+        if (columns.containsKey("labels")) {
           Map tag = (Map) columns.get("labels");
           for (Object tagPos : tag.keySet()) {
-            int pos = getPosition(tagPos);
-            Cell tagCell = cells.get(pos);
-            if(null != tagCell) {
-              labels.put(tag.get(tagPos).toString(),getValue(tagCell).toString());
+            int pos;
+            try {
+              pos = getPosition(tagPos,keys);
+            } catch (Exception e) {
+              throw new WarpScriptJavaFunctionException(e.getMessage());
             }
+            String value;
+            if(tag.get(tagPos) == null) {
+              value = tagPos.toString();
+            } else {
+              value = tag.get(tagPos).toString();
+            }
+            posLabels.put(pos, value);
           }
         }
-        
+
         //
-        // Get latitude
+        // Get class position columns
         //
-        Double latitude = null;
-        if (columns.containsKey("latitude")) {
-          Object tagPos = columns.get("latitude");
-          int posLat = getPosition(tagPos);
-          Cell latCell = cells.get(posLat);
-          if(null != latCell) {
-            if (latCell.hasDouble()) {
-              latitude = latCell.getDouble();
-            }
-            if (latCell.hasLong()) {
-              Long tmp = latCell.getLong();
-              latitude = tmp.doubleValue();
-            }
-          }
-        }
-        
-        //
-        // Get longitude
-        //
-        Double longitude = null;
-        if (columns.containsKey("longitude")) {
-          Object tagPos = columns.get("longitude");
-          int pos = getPosition(tagPos);
-          Cell longCell = cells.get(pos);
-          if(null != longCell) {
-            if (longCell.hasDouble()) {
-              longitude = longCell.getDouble();
-            }
-            if (longCell.hasLong()) {
-              Long tmp = longCell.getLong();
-              longitude = tmp.doubleValue();
-            }
-          }
-        }
-        
-        //
-        // Convert position to GEOXP point
-        //
-        
-        long location = GeoTimeSerie.NO_LOCATION;
-        if (null != longitude && null != latitude) {
-          location = GeoXPLib.toGeoXPPoint(latitude, longitude);
-        }
-        
-        //
-        // Get elevation
-        //
-        Long elevation = GeoTimeSerie.NO_ELEVATION;
-        if (columns.containsKey("elevation")) {
-          Object tagPos = columns.get("elevation");
-          int pos = getPosition(tagPos);
-          Cell elevCell = cells.get(pos);
-          if(null != elevCell) {
-            if (elevCell.hasDouble()) {
-              Double tmp = elevCell.getDouble();
-              elevation = elevCell.getLong();
-            }
-            if (elevCell.hasLong()) {
-              elevation = elevCell.getLong();
-            }
-          }
-        }
-        
-  
-        //
-        // Add points to GTS
-        //
-        
-        Map<Integer, String> className = (Map<Integer, String>) columns.get("class");
-        
-        //
-        // For each class set
-        //
-        
+
+        Map<Integer, String> posClass = new HashMap<Integer, String>(); 
+        Map className = (Map) columns.get("class");
         for (Object classPos : className.keySet()) {
-          GeoTimeSerie currentGts = null;
-          String name = className.get(classPos) + labels.toString();
-          
-          //
-          // If exists, load builded GTS
-          //
-          
-          if (mapGTS.containsKey(name)) {
-            currentGts = mapGTS.get(name);
+          int pos;
+          try {
+            pos = getPosition(classPos,keys);
+          } catch (Exception e) {
+            throw new WarpScriptJavaFunctionException(e.getMessage());
+          }
+          String value;
+          if(className.get(classPos) == null) {
+            value = classPos.toString();
           } else {
-            
-            //
-            // Otherwise initialize a GTS with current class name and labels
-            //
-            
-            currentGts = new GeoTimeSerie();
-            currentGts.setLabels(labels);
-            currentGts.setName(className.get(classPos));
+            value = className.get(classPos).toString();
           }
-          
-          //
-          // Get current point value
-          //
-
-          int pos = getPosition(classPos);
-          Cell classCell = cells.get(pos);
-          Object value = null;
-          if(null != classCell ) {
-            value = getValue(classCell);
-          }
-          
-          // 
-          // Add current value to the GTS
-          //
-          
-          GTSHelper.setValue(currentGts, timestamp, location, elevation, value, true);
-          
-          //
-          // Save GTS in a Map
-          //
-          
-          mapGTS.put(name,currentGts);
+          posClass.put(pos, value);
         }
-        
-      }
-      riakts.shutdown();
-      return mapGTS.values();
-    }
-    else {
-      return new ArrayList<>();
-    }
-  }
 
+        List<List<Object>> values = serie.getValues();
+
+        //
+        // for each values in series
+        //
+
+        for (List<Object> list : values) {
+
+          //
+          // Compute current labels
+          //
+
+          Map<String, String> labels = new HashMap<String, String>();
+          for (Integer pos : posLabels.keySet()) {
+            if (null!=list.get(pos)) {
+              labels.put(posLabels.get(pos),list.get(pos).toString());
+            }
+          }
+
+          //
+          // For each class to load
+          //
+
+          for (Integer pos : posClass.keySet()) {
+
+            //
+            // Get className
+            // 
+
+            String currclassName = posClass.get(pos) + labels.toString();
+
+            //
+            // Load or create GTS to add currents values
+            //
+
+            GeoTimeSerie currentGTS;
+            if(mapGTS.containsKey(currclassName)) {
+              currentGTS = mapGTS.get(currclassName);
+            } else {
+              currentGTS = new GeoTimeSerie();
+              currentGTS.setName(posClass.get(pos));
+              currentGTS.setLabels(labels);
+            }
+
+            //
+            // Get timestamp value and convert it to long
+            //
+
+            ZonedDateTime zdt = ZonedDateTime.parse(list.get(posTimeStamp).toString());
+            long ts = zdt.getLong(ChronoField.INSTANT_SECONDS) * Constants.TIME_UNITS_PER_S + zdt.getLong(ChronoField.NANO_OF_SECOND) / (1000000L / Constants.TIME_UNITS_PER_MS);
+            
+            //
+            // Get location with longitude and latitude values (Double)
+            //
+
+            long location = GeoTimeSerie.NO_LOCATION;
+
+            Double latitude = null, longitude = null;
+
+            if (null != posLatitude && null != posLongitude)
+            {
+
+              Object curLatitude = getValue(list.get(posLatitude).toString());
+              if (curLatitude instanceof Double ) {
+                latitude = (Double) curLatitude;
+              }
+
+              Object curLongitude= getValue(list.get(posLongitude).toString());
+              if (curLongitude instanceof Double) {
+                longitude = (Double) curLongitude;
+              }
+            }
+
+            if (null != longitude && null != latitude) {
+              location = GeoXPLib.toGeoXPPoint(latitude, longitude);
+            }
+
+            Long elevation = GeoTimeSerie.NO_ELEVATION;
+
+            if (null != posElevation)
+            {
+              Object curLongitude= getValue(list.get(posElevation).toString());
+              if (curLongitude instanceof Double) {
+                Double tmp = (Double) curLongitude;
+                elevation = Math.round(tmp);
+              }
+              if (curLongitude instanceof Long) {
+                elevation = (Long) curLongitude;
+              }
+            }
+
+            Object currentValue = null;
+            if ( null != list.get(pos) ) {
+              currentValue = getValue(list.get(pos).toString());
+            }
+
+            GTSHelper.setValue(currentGTS, ts, location, elevation, currentValue, true);
+            //double elevation = (Double) list.get(posElevation);
+            mapGTS.put(currclassName, currentGTS);
+          }
+        }
+      }
+    }
+    return mapGTS.values();  
+  }
+  
   /**
-   * Method to get riak Cell value according to current object type
+   * Method to get InfluxDB value with correct type
    * @param cell
    * @return
    */
-  private Object getValue(Cell cell) {
-    Object object = null;
-    if(cell.hasBoolean()) {
-      object = cell.getBoolean();
+  private Object getValue(String value) {
+    try {
+      return parse(value); 
+    } catch (Exception e) {
+      if (value.equalsIgnoreCase("true") || value.equalsIgnoreCase("false")) {
+        return Boolean.valueOf(value);
+      }else {
+        return value;
+      }
     }
-    if(cell.hasDouble()) {
-      object = cell.getDouble();
-    }
-    if(cell.hasLong()) {
-      object = cell.getLong();
-    }
-    if(cell.hasVarcharValue()) {
-      object = cell.getVarcharAsUTF8String();
-    }
-    if(cell.hasTimestamp()) {
-      object = cell.getTimestamp();
-    }
-    return object;
   }
-  
+
   /**
-   * Method to get the position in riak table of a specific column
+   * Method to parse String to get a Number
+   * @param value
+   * @return
+   */
+  private Number parse(String str) throws NumberFormatException {
+    Number number = null;
+    try {
+      number = Double.parseDouble(str);
+    } catch(NumberFormatException e) {
+      try {
+        number = Float.parseFloat(str);
+      } catch(NumberFormatException e1) {
+        try {
+          number = Long.parseLong(str);
+        } catch(NumberFormatException e2) {
+          try {
+            number = Integer.parseInt(str);
+          } catch(NumberFormatException e3) {
+            throw e3;
+          }       
+        }       
+      }       
+    }
+    return number;
+  }
+
+  /**
+   * Method to get the position in InfluxDB table of a specific column
    * @param tagPos
    * @return
    * @throws WarpScriptJavaFunctionException
    */
-  private int getPosition(Object tagPos) throws WarpScriptJavaFunctionException {
+  private int getPosition(Object tagPos, List<String> keys) throws Exception {
     int pos;
     if (tagPos instanceof Number) {
       pos = ((Number) tagPos).intValue();
     } else if (tagPos instanceof String) {
-      pos = Integer.parseInt( (String) tagPos);
+      if(keys.contains(tagPos)) {
+        pos = keys.indexOf(tagPos);
+      } else {
+        pos = Integer.parseInt( (String) tagPos);
+      }
     } else {
-      throw new WarpScriptJavaFunctionException("Position isn't a number");
+      throw new Exception("Position isn't a number");
     }
     return pos;
   }
+
 }
