@@ -14,7 +14,7 @@
 //   limitations under the License.
 //
 
-package io.warp10.InfluxDB;
+package io.warp10.influxdb;
 
 import java.net.UnknownHostException;
 import java.time.ZonedDateTime;
